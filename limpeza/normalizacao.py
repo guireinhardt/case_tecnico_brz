@@ -22,14 +22,15 @@ CENTAVO = Decimal("0.01")
 
 
 class Motivo(str, Enum):
-    """Por que um valor foi rejeitado. Vai para o relatório como código."""
+    """Por que um dado foi rejeitado. Vai para o relatório como código."""
 
-    AUSENTE = "valor ausente"
+    AUSENTE = "campo ausente"
     NEGATIVO = "valor negativo"
     ZERO = "valor zero"
     AMBIGUO = "formato ambíguo"
     NAO_RECONHECIDO = "formato não reconhecido"
     MAIS_DE_DUAS_CASAS = "mais de duas casas decimais"
+    FORMATO_CNJ_INVALIDO = "formato CNJ inválido"
 
 
 class ValorInvalido(ValueError):
@@ -117,3 +118,99 @@ def _validar(numero: Decimal, bruto: object) -> Decimal:
         return numero.quantize(CENTAVO)
     except InvalidOperation:
         raise ValorInvalido(Motivo.NAO_RECONHECIDO, bruto) from None
+
+
+# ---------------------------------------------------------------------------
+# Número do processo (CNJ)
+# ---------------------------------------------------------------------------
+
+
+class ProcessoInvalido(ValueError):
+    """O número do processo não pode ser convertido sem adivinhar."""
+
+    def __init__(self, motivo: Motivo, bruto: object) -> None:
+        super().__init__(f"{motivo.value}: {bruto!r}")
+        self.motivo = motivo
+        self.bruto = bruto
+
+
+@dataclass(frozen=True)
+class Processo:
+    """Número do processo normalizado.
+
+    chave: os 20 dígitos, usada para cruzar arquivos e gravar no banco.
+    correcoes: o que precisou ser ajustado no formato, na ordem em que aconteceu.
+    dv_valido: resultado da conferência do dígito verificador (só alerta).
+    """
+
+    chave: str
+    correcoes: tuple[str, ...] = ()
+    dv_valido: bool = False
+
+    @property
+    def formatado(self) -> str:
+        """A chave com a máscara NNNNNNN-DD.AAAA.J.TR.OOOO, para exibição."""
+        c = self.chave
+        return f"{c[0:7]}-{c[7:9]}.{c[9:13]}.{c[13]}.{c[14:16]}.{c[16:20]}"
+
+
+# Com máscara. O primeiro grupo aceita de 1 a 7 dígitos para permitir
+# completar os zeros à esquerda (premissa P8); os demais têm tamanho exato.
+_CNJ_COM_MASCARA = re.compile(r"^(\d{1,7})-(\d{2})\.(\d{4})\.(\d)\.(\d{2})\.(\d{4})$")
+# Sem máscara: exatamente 20 dígitos.
+_CNJ_SEM_MASCARA = re.compile(r"^\d{20}$")
+
+
+def normalizar_processo(bruto: object) -> Processo:
+    """Converte o número do processo na chave de 20 dígitos.
+
+    Aceita a forma com máscara ou os 20 dígitos. Levanta ProcessoInvalido
+    quando o número é ausente ou está em qualquer outro formato.
+    """
+    correcoes: list[str] = []
+
+    # Passo 1: ausente.
+    if bruto is None:
+        raise ProcessoInvalido(Motivo.AUSENTE, bruto)
+
+    # Passo 2: só texto é aceito. Um int já perdeu os zeros à esquerda
+    # (00234562120208260053 vira 234562120208260053) e bool é int em Python.
+    if not isinstance(bruto, str):
+        raise ProcessoInvalido(Motivo.FORMATO_CNJ_INVALIDO, bruto)
+
+    # Passo 3: espaços ao redor.
+    texto = bruto.strip()
+    if not texto:
+        raise ProcessoInvalido(Motivo.AUSENTE, bruto)
+    if texto != bruto:
+        correcoes.append("espaços removidos")
+
+    # Passo 4: forma com máscara (a documentada pelo tribunal).
+    com_mascara = _CNJ_COM_MASCARA.match(texto)
+    if com_mascara:
+        sequencial, dv, ano, justica, tribunal, origem = com_mascara.groups()
+        if len(sequencial) < 7:
+            sequencial = sequencial.zfill(7)
+            correcoes.append("zeros à esquerda completados")
+        chave = sequencial + dv + ano + justica + tribunal + origem
+
+    # Passo 5: só os 20 dígitos.
+    elif _CNJ_SEM_MASCARA.match(texto):
+        chave = texto
+        correcoes.append("recebido sem máscara")
+
+    # Passo 6: qualquer outra coisa seria palpite.
+    else:
+        raise ProcessoInvalido(Motivo.FORMATO_CNJ_INVALIDO, bruto)
+
+    return Processo(chave, tuple(correcoes), _dv_valido(chave))
+
+
+def _dv_valido(chave: str) -> bool:
+    """Confere o dígito verificador (Res. CNJ 65/2008, ISO 7064 módulo 97).
+
+    O DV vai para o final do número e o resto da divisão por 97 deve ser 1.
+    """
+    sequencial, dv, resto = chave[0:7], chave[7:9], chave[9:20]
+    return int(sequencial + resto + dv) % 97 == 1
+
