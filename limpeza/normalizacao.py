@@ -15,10 +15,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 CENTAVO = Decimal("0.01")
+# Fuso de referência para transformar data e hora em data (premissa P11).
+# A base IANA conhece o horário de verão que vigorou até 2019; um offset
+# fixo de -03:00 erraria datas antigas.
+BRASILIA = ZoneInfo("America/Sao_Paulo")
 
 
 class Motivo(str, Enum):
@@ -31,6 +37,9 @@ class Motivo(str, Enum):
     NAO_RECONHECIDO = "formato não reconhecido"
     MAIS_DE_DUAS_CASAS = "mais de duas casas decimais"
     FORMATO_CNJ_INVALIDO = "formato CNJ inválido"
+    FORMATO_DATA_INVALIDO = "formato de data inválido"
+    DATA_INEXISTENTE = "data inexistente"
+    FUSO_AUSENTE = "data e hora sem fuso horário"
 
 
 class ValorInvalido(ValueError):
@@ -213,4 +222,116 @@ def _dv_valido(chave: str) -> bool:
     """
     sequencial, dv, resto = chave[0:7], chave[7:9], chave[9:20]
     return int(sequencial + resto + dv) % 97 == 1
+
+
+# ---------------------------------------------------------------------------
+# Datas
+# ---------------------------------------------------------------------------
+
+
+class DataInvalida(ValueError):
+    """A data não pode ser convertida sem adivinhar."""
+
+    def __init__(self, motivo: Motivo, bruto: object) -> None:
+        super().__init__(f"{motivo.value}: {bruto!r}")
+        self.motivo = motivo
+        self.bruto = bruto
+
+
+@dataclass(frozen=True)
+class Data:
+    """Data convertida (só dia) e as correções de formato feitas."""
+
+    valor: date
+    correcoes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DataHora:
+    """Data e hora com fuso, e as correções de formato feitas."""
+
+    valor: datetime
+    correcoes: tuple[str, ...] = ()
+
+
+# "2025-03-10": o formato documentado.
+_DATA_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+# "10/04/2025": sempre lido como dia/mês (padrão brasileiro, premissa P10).
+_DATA_BRASILEIRA = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
+# "2025-04-02T23:30:00-03:00" ou "...Z". O fuso é opcional no padrão só
+# para que a ausência dele tenha um motivo próprio (FUSO_AUSENTE).
+_DATA_HORA_ISO = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(?P<fuso>Z|[+-]\d{2}:\d{2})?$"
+)
+
+
+def normalizar_data(bruto: object) -> Data:
+    """Converte uma data bruta em date (premissas P10-P12).
+
+    Aceita AAAA-MM-DD, DD/MM/AAAA e data e hora com fuso; esta última vira
+    a data correspondente em Brasília. Levanta DataInvalida nos demais casos.
+    """
+    texto, correcoes = _texto_obrigatorio(bruto)
+
+    if _DATA_ISO.match(texto):
+        return Data(_criar_data(texto, bruto), tuple(correcoes))
+
+    brasileira = _DATA_BRASILEIRA.match(texto)
+    if brasileira:
+        dia, mes, ano = brasileira.groups()
+        correcoes.append("formato DD/MM/AAAA convertido")
+        return Data(_criar_data(f"{ano}-{mes}-{dia}", bruto), tuple(correcoes))
+
+    if _DATA_HORA_ISO.match(texto):
+        instante = _criar_data_hora(texto, bruto)
+        correcoes.append("data e hora convertida para a data de Brasília")
+        return Data(instante.astimezone(BRASILIA).date(), tuple(correcoes))
+
+    raise DataInvalida(Motivo.FORMATO_DATA_INVALIDO, bruto)
+
+
+def normalizar_data_hora(bruto: object) -> DataHora:
+    """Converte data e hora com fuso em datetime (premissa P13).
+
+    Usado em atualizado_em, que decide qual versão de um evento é a mais
+    nova. Exige fuso: sem ele, a ordem entre duas versões pode sair errada.
+    """
+    texto, correcoes = _texto_obrigatorio(bruto)
+    if not _DATA_HORA_ISO.match(texto):
+        raise DataInvalida(Motivo.FORMATO_DATA_INVALIDO, bruto)
+    return DataHora(_criar_data_hora(texto, bruto), tuple(correcoes))
+
+
+def _texto_obrigatorio(bruto: object) -> tuple[str, list[str]]:
+    """Etapas comuns às datas: ausente, tipo e espaços ao redor."""
+    if bruto is None:
+        raise DataInvalida(Motivo.AUSENTE, bruto)
+    if not isinstance(bruto, str):
+        raise DataInvalida(Motivo.FORMATO_DATA_INVALIDO, bruto)
+    texto = bruto.strip()
+    if not texto:
+        raise DataInvalida(Motivo.AUSENTE, bruto)
+    return texto, (["espaços removidos"] if texto != bruto else [])
+
+
+def _criar_data(iso: str, bruto: object) -> date:
+    """O formato já foi conferido; aqui só falha data impossível (31/02)."""
+    try:
+        return date.fromisoformat(iso)
+    except ValueError:
+        raise DataInvalida(Motivo.DATA_INEXISTENTE, bruto) from None
+
+
+def _criar_data_hora(texto: str, bruto: object) -> datetime:
+    """Interpreta data e hora ISO já conferida pelo padrão; exige fuso."""
+    if _DATA_HORA_ISO.match(texto).group("fuso") is None:
+        raise DataInvalida(Motivo.FUSO_AUSENTE, bruto)
+    # Python 3.10 não aceita o sufixo "Z" no fromisoformat (só a partir do
+    # 3.11), e o projeto declara suporte ao 3.10.
+    if texto.endswith("Z"):
+        texto = texto[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(texto)
+    except ValueError:
+        raise DataInvalida(Motivo.DATA_INEXISTENTE, bruto) from None
 
