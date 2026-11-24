@@ -1,0 +1,4 @@
+pytest>=8
+# Base de fusos IANA: no Windows o zoneinfo não tem dados próprios,
+# e precisamos de America/Sao_Paulo para converter datas com fuso.
+tzdata
