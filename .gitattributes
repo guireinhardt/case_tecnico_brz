@@ -1,0 +1,5 @@
+# Arquivos originais do desafio: preservar byte a byte.
+# Sem isso, core.autocrlf converte CRLF -> LF no repositório e quem clonar
+# em Linux/Mac recebe arquivos diferentes dos enviados pelo tribunal
+# (o CRLF do tribunal.csv é evidência do diagnóstico).
+case-candidato/dados/** -text -diff
