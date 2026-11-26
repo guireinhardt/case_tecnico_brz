@@ -221,3 +221,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Material recebido por e-mail (o conteúdo já está em case-candidato/)
+/case-candidato (1).zip
+/case.pdf

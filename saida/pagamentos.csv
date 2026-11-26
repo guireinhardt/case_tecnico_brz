@@ -1,0 +1,9 @@
+evento_id,processo,tipo,valor,valor_com_sinal,pago_em,atualizado_em,origem,correcoes,alertas
+ev-002,0012345-10.2019.8.26.0053,pagamento,2500.50,2500.50,2025-04-10,2025-04-10T09:00:00-03:00,pagamentos.json:10,valor formato brasileiro convertido | data_pagamento formato DD/MM/AAAA convertido,
+ev-003,0023456-21.2020.8.26.0053,pagamento,8000.00,8000.00,2025-05-02,2025-05-02T11:00:00-03:00,pagamentos.json:18,,
+ev-005,0023456-21.2020.8.26.0053,pagamento,1200.00,1200.00,2025-06-01,2025-06-01T10:00:00-03:00,pagamentos.json:42,processo recebido sem máscara,
+ev-006,0034567-32.2018.8.26.0405,pagamento,5000.00,5000.00,2025-02-20,2025-02-20T10:00:00-03:00,pagamentos.json:50,,
+ev-007,0034567-32.2018.8.26.0405,estorno,5000.00,-5000.00,2025-02-21,2025-02-21T10:00:00-03:00,pagamentos.json:58,,tipo 'estorno' não previsto na documentação; subtraído do total (P5)
+ev-001,0012345-10.2019.8.26.0053,pagamento,15500.00,15500.00,2025-03-10,2025-03-11T09:00:00-03:00,pagamentos.json:66,,"pago em 2025-03-10, antes da apresentação do precatório (2025-04-02)"
+ev-008,0045678-43.2021.5.02.0011,pagamento,3000.00,3000.00,2025-07-15,2025-07-15T10:00:00-03:00,pagamentos.json:74,,
+ev-011,0067890-65.2016.8.26.0053,pagamento,4000.00,4000.00,2025-08-10,2025-08-10T10:00:00-03:00,pagamentos.json:98,,precatório não consta no nosso sistema (hub.csv)
