@@ -1,13 +1,11 @@
 # Diagnóstico, prevenção e dúvidas
 
-**Resumo.** Os números não batem com os do tribunal por três causas
-principais: (1) a importação soma cada linha recebida, sem identificar
-eventos repetidos, e por isso infla o total pago; (2) o que não consegue
-importar é descartado sem aviso, então pagamentos reais somem; (3) a
-conferência semanal compara textos "exatamente como estão escritos" entre
-arquivos em formatos diferentes, o que gera divergências falsas e esconde as
-verdadeiras. O relatório completo da limpeza está em
-[saida/relatorio.md](saida/relatorio.md).
+**Resumo.** Os números não batem porque o script soma pagamentos repetidos,
+soma estornos como se fossem pagamentos e descarta em silêncio o que não
+consegue importar. Além disso, a conferência compara os arquivos do jeito
+que estão escritos, mas eles chegam em formatos diferentes: isso gera
+divergências falsas e esconde as verdadeiras. O relatório completo da
+limpeza está em [saida/relatorio.md](saida/relatorio.md).
 
 ## 1. Diagnóstico
 
@@ -28,59 +26,70 @@ citações apontam direto a linha do campo.
 
 ### D1. A importação soma eventos repetidos e infla o total pago — causa raiz
 
-- **Evidência.** O tribunal envia todo dia os eventos dos **últimos 7 dias**,
-  e o script **soma cada valor** ao total; após uma falha, o operador roda
-  **o mesmo arquivo de novo** (`ENUNCIADO.md`, fluxo, passos 1 e 2). Nada no
-  banco impede o mesmo evento de entrar duas vezes: `pagamento.evento_id` não
-  é único (`schema.sql:11`) e não há coluna para a versão do registro. No
-  próprio arquivo, o ev-001 aparece duas vezes com valores diferentes
-  (`pagamentos.json:2`, 15.000,00, e `:66`, 15.500,00, com `atualizado_em` mais
-  recente) e o ev-002 aparece duas vezes idêntico (`:10` e `:26`).
-- **Impacto.** No processo 0012345, somar tudo dá **35.501,00**; o correto é
-  **18.000,50** (versão mais nova do ev-001 + uma vez o ev-002), quase o dobro.
-  Como cada evento aparece em até 7 arquivos diários, a soma pode chegar a 7
-  vezes o valor real. O total pago inflado faz o saldo devedor parecer menor
-  do que é: a equipe deixa de cobrar o que ainda é devido.
+- **O que acontece.** No processo 0012345, o arquivo traz o ev-001 duas
+  vezes, uma com 15.000,00 e outra com 15.500,00, e o ev-002 duas vezes com
+  2.500,50. Somando todos os valores, como o script faz hoje, o total dá
+  **35.501,00**. O valor real é **18.000,50**: o ev-001 é um único pagamento
+  que o tribunal corrigiu de 15.000,00 para 15.500,00 (mesmo `evento_id`,
+  `atualizado_em` mais recente), e o ev-002 é uma cópia repetida, que só
+  conta uma vez.
+- **Evidência.** ev-001 em `pagamentos.json:2` e `:66`; ev-002 em `:10` e
+  `:26`. O tribunal envia todo dia os eventos dos **últimos 7 dias**, o
+  script **soma cada valor** ao total e, quando falha, o operador roda **o
+  mesmo arquivo de novo** (`ENUNCIADO.md`, fluxo, passos 1 e 2). Nada no
+  banco impede o mesmo evento de entrar mais de uma vez: `evento_id` não é
+  único (`schema.sql:11`).
+- **Impacto.** O total pago fica quase o dobro do real nesse processo. Como
+  cada evento aparece em até 7 arquivos diários, a soma pode chegar a 7
+  vezes o valor real. Com o total pago inflado, o saldo devedor parece menor
+  do que é, e a equipe deixa de cobrar o que ainda é devido.
 - **Relação.** Causa. Viabilizada pela falta de unicidade no banco (D10).
 
 ### D2. Eventos que não importam são descartados sem aviso — causa
 
-- **Evidência.** `ENUNCIADO.md`, fluxo, passo 5. Pelas regras do banco
-  (`schema.sql`), quatro eventos do arquivo seriam recusados em silêncio:
-  ev-004 com `valor: null` (`pagamentos.json:34`, viola `NOT NULL`), ev-009
-  com valor −200 (`:82`, viola `CHECK (valor > 0)`), ev-010 sem processo
-  (`:90`) e ev-011, de R$ 4.000,00 (`:98`), cujo precatório 0067890 não
-  existe no hub e viola a chave estrangeira.
-- **Impacto.** O ev-011 é um pagamento real de um precatório que consta na
-  lista oficial do tribunal (`tribunal.csv:6`): R$ 4.000,00 somem do total
-  sem ninguém saber. Os R$ 750,00 do ev-010 não têm dono identificado.
+- **O que acontece.** Hoje, quando um pagamento não consegue ser importado,
+  ele é descartado em silêncio (`ENUNCIADO.md`, fluxo, passo 5). Pelas
+  regras do banco, quatro eventos do arquivo cairiam nisso: ev-004 sem valor
+  (`pagamentos.json:34`, viola `NOT NULL`), ev-009 com valor −200 (`:82`,
+  viola `CHECK (valor > 0)`), ev-010 com o processo vazio (`:90`) e ev-011
+  (`:98`), cujo precatório 0067890 não existe no hub, o que viola a chave
+  estrangeira.
+- **Impacto.** O ev-011 é um pagamento real de R$ 4.000,00, de um precatório
+  que está na lista oficial do tribunal (`tribunal.csv:6`). Ele some do
+  total e ninguém fica sabendo. Os R$ 750,00 do ev-010 nem têm dono
+  identificado.
 - **Relação.** Causa. Agravado por D5 (o 0067890 falta no cadastro).
 
 ### D3. O estorno é somado como se fosse pagamento — causa
 
-- **Evidência.** O ev-007 (`pagamentos.json:58`) tem `tipo: "estorno"` de
-  5.000,00, no mesmo processo e no dia seguinte ao pagamento ev-006
-  (`:50`). A documentação diz que o tipo é **"sempre pagamento"**
-  (`DOCUMENTACAO_TRIBUNAL.md:15`), e o script "soma cada valor".
-- **Impacto.** O processo 0034567 aparece com **10.000,00 pagos**; o correto
-  é **0,00** (pagou e foi estornado). O banco já previa o estorno
-  (`schema.sql:12`), mas o processo de importação não.
+- **O que acontece.** A documentação diz que o tipo é **sempre
+  "pagamento"** (`DOCUMENTACAO_TRIBUNAL.md:15`), e o script soma cada valor.
+  Mas o ev-007 (`pagamentos.json:58`) chega como `tipo: "estorno"` de
+  5.000,00, no mesmo processo e no dia seguinte ao pagamento ev-006 (`:50`).
+  Somando os dois, o total dá **10.000,00**. O `schema.sql` aceita o tipo
+  estorno (`schema.sql:12`), mas o processo de importação não sabia dele.
+- **Impacto.** O processo 0034567 aparece com 10.000,00 pagos, quando o
+  correto é **0,00**: o valor foi pago e depois devolvido.
 - **Relação.** Causa, consequência da documentação desatualizada (D8).
 
 ### D4. O prazo de pagamento no hub está errado em 2 de 5 precatórios — causa
 
-- **Evidência.** Pela regra do `ENUNCIADO.md` (apresentado até 2 de abril →
-  31/12 do ano seguinte):
-  - 0012345, apresentado em 02/04/2025: o hub diz **2027-12-31**
-    (`hub.csv:2`); o correto é **2026-12-31**. "Até 2 de abril" inclui o dia 2.
-  - 0056789, apresentado em `2025-04-03T01:00:00Z` (`apresentacoes.json:18`),
-    que é 22h do dia **2** em Brasília: o hub diz **2027-12-31**
-    (`hub.csv:6`); o correto é **2026-12-31**.
-  - O hub dá prazos diferentes para dois precatórios apresentados no mesmo
-    dia local: 0012345 → 2027 e 0045678 → 2026 (`hub.csv:2` e `:5`). Nenhuma
-    regra única explica os dois; pode haver bug ou edição manual (dúvida O3).
-- **Impacto.** A equipe prioriza a carteira pelo prazo. Esses precatórios
-  aparecem com **um ano a mais** de prazo do que têm de fato.
+- **O que acontece.** Pela regra do `ENUNCIADO.md`, quem é apresentado até
+  2 de abril tem prazo até 31/12 do ano seguinte. Dois precatórios estão
+  errados no hub, por motivos diferentes:
+  - **0012345, erro de regra.** Apresentado em 02/04/2025 (só a data, sem
+    hora nem fuso). O hub diz **2027-12-31** (`hub.csv:2`), mas o correto é
+    **2026-12-31**: "até 2 de abril" inclui o próprio dia 2.
+  - **0056789, erro de fuso.** Apresentado em `2025-04-03T01:00:00Z`
+    (`apresentacoes.json:18`). O `Z` é UTC; em Brasília eram 22h do dia
+    **2**. O hub diz **2027-12-31** (`hub.csv:6`), mas o correto é
+    **2026-12-31**.
+  - O hub ainda dá prazos diferentes para dois precatórios apresentados no
+    mesmo dia: 0012345 → 2027 e 0045678 → 2026 (`hub.csv:2` e `:5`). Nenhuma
+    regra única explica os dois; pode ser bug ou edição manual (dúvida O3).
+- **Impacto.** A equipe usa o prazo para priorizar a carteira. Esses
+  precatórios aparecem com **um ano a mais** de prazo do que têm de fato, e
+  ficam para trás na fila.
 - **Relação.** Causa. Agravada pelos formatos de data misturados (D9).
 
 ### D5. Divergências reais de cadastro entre tribunal e hub — consequência

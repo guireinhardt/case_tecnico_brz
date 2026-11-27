@@ -71,4 +71,34 @@ saida/                   resultado da última execução
 
 ## Uso de IA
 
-_A preencher._
+Usei o Claude Code para analisar os arquivos e escrever o código.
+
+**O que foi decisão minha.** As regras de negócio foram decididas por mim:
+eu procurava entender a lógica de cada caso para tomar a decisão e instruir
+a IA. Alguns exemplos:
+
+- Completar com zeros à esquerda o número sequencial do CNJ quando ele vem
+  com a máscara (a IA recomendava rejeitar).
+- Quando tribunal e hub divergem, o tribunal prevalece (a IA recomendava
+  mostrar os dois valores sem escolher).
+- Eventos sem valor ou sem processo são descartados (a IA recomendava
+  deixar em dúvida).
+- Nas datas, levantei que o Brasil tem quatro fusos horários. Isso definiu
+  que data e hora sem fuso deve ser rejeitada e gerou a dúvida T9, sobre
+  usar o horário local do tribunal.
+
+As decisões e o motivo de cada uma estão em [DIAGNOSTICO.md](DIAGNOSTICO.md)
+(premissas P1 a P19).
+
+**Como conferi o que a IA produziu.** Pedi que toda afirmação viesse com a
+evidência (arquivo e linha) e conferi nos arquivos originais; algumas
+citações estavam erradas e foram corrigidas. Rodei os testes, analisei os
+arquivos escritos e refiz à mão o total de alguns processos. O gabarito
+feito à mão (`tests/test_gabarito.py`) encontrou um erro de prazo na
+análise inicial.
+
+**O que eu faria diferente.** Escreveria mais partes do código eu mesmo,
+para entender melhor o projeto. O SQL de prevenção também ficou sem ser
+executado num banco real.
+
+Os commits feitos com a IA estão marcados com `Co-Authored-By: Claude`.
